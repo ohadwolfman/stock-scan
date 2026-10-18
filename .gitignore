@@ -55,3 +55,8 @@ $RECYCLE.BIN/
 # IDE settings
 .idea/
 .vscode/
+# Nash screener generated data
+nash_screener/cache/
+nash_screener/reports/
+cache/
+reports/
