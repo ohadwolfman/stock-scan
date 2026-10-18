@@ -72,6 +72,7 @@ OUTPUT_COLUMNS = [
 # This file will be overwritten every time the script runs.
 OUTPUT_TEXT_FILE = Path(__file__).resolve().with_name("stock_scan_snapshot.txt")
 QUALITY_CACHE_FILE = Path(__file__).resolve().with_name("stock_scan_quality_cache.json")
+PROMPT_FILE = Path(__file__).resolve().parent / "prompts" / "weekly-market-brief-v7.txt"
 QUALITY_CACHE_MAX_AGE = timedelta(days=7)
 QUALITY_CACHE_INCOMPLETE_MAX_AGE = timedelta(days=1)
 QUALITY_COLUMNS = OUTPUT_COLUMNS[-12:]
@@ -480,7 +481,7 @@ def format_value_for_display(value, column_name: str):
     return str(value)
 
 
-def write_text_snapshot(df: pd.DataFrame, file_path: str = OUTPUT_TEXT_FILE, snapshot_date: str | None = None, missing_tickers: list[str] | None = None) -> None:
+def write_text_snapshot(df: pd.DataFrame, file_path: str = OUTPUT_TEXT_FILE, snapshot_date: str | None = None, missing_tickers: list[str] | None = None) -> str:
     formatted = df.drop(columns=["_asof"]).copy()
     for col in formatted.columns:
         if col in {"Ticker", "Sector"}:
@@ -497,6 +498,38 @@ def write_text_snapshot(df: pd.DataFrame, file_path: str = OUTPUT_TEXT_FILE, sna
 
     with open(file_path, "w", encoding="utf-8") as f:
         f.write(snapshot_text)
+    return snapshot_text
+
+
+def update_prompt_spot_data(snapshot_text: str, prompt_file: Path = PROMPT_FILE) -> None:
+    with prompt_file.open("r", encoding="utf-8", newline="") as prompt_handle:
+        prompt_text = prompt_handle.read()
+
+    section_heading = "נתוני_ספוט:"
+    heading_index = prompt_text.find(section_heading)
+    opening_marker = prompt_text.find("▼", heading_index + len(section_heading)) if heading_index >= 0 else -1
+    closing_marker = prompt_text.find("▲", opening_marker + 1) if opening_marker >= 0 else -1
+    next_heading = prompt_text.find(section_heading, heading_index + len(section_heading)) if heading_index >= 0 else -1
+    if (
+        heading_index < 0
+        or opening_marker < 0
+        or closing_marker < 0
+        or (next_heading >= 0 and next_heading < closing_marker)
+    ):
+        raise ValueError(f"Could not find a complete {section_heading} block in {prompt_file}")
+
+    line_ending = "\r\n" if "\r\n" in prompt_text else "\n"
+    snapshot_text = snapshot_text.rstrip("\r\n").replace("\r\n", "\n").replace("\n", line_ending)
+    updated_prompt = (
+        prompt_text[: opening_marker + 1]
+        + line_ending
+        + snapshot_text
+        + line_ending
+        + prompt_text[closing_marker:]
+    )
+
+    with prompt_file.open("w", encoding="utf-8", newline="") as prompt_handle:
+        prompt_handle.write(updated_prompt)
 
 
 def build_sector_map() -> dict[str, str]:
@@ -523,24 +556,8 @@ if __name__ == "__main__":
     df = scan_tickers(tickers, sector_map)
     snapshot_date = df["_asof"].dropna().max() if "_asof" in df.columns and not df["_asof"].dropna().empty else None
 
-    pd.set_option("display.max_columns", None)
-    pd.set_option("display.width", 1000)
-
     missing = df.loc[df["Price"].isna(), "Ticker"].tolist()
-    header_line = f"Spot data as of {snapshot_date}" if snapshot_date is not None else "Spot data"
-    quality_asof = df.attrs.get("quality_asof")
-    if quality_asof is not None:
-        header_line += f" | Quality data cache refreshed {quality_asof}"
-
-    display_df = df.drop(columns=["_asof"]).copy()
-    for col in display_df.columns:
-        if col in {"Ticker", "Sector"}:
-            continue
-        display_df[col] = display_df[col].map(lambda value: format_value_for_display(value, col))
-
-    missing_text = ", ".join(missing) if missing else "none"
-    snapshot_text = f"{header_line}\n{display_df.to_csv(sep='\t', index=False, lineterminator='\n').rstrip(chr(10))}\nMissing data tickers: {missing_text}\n"
+    snapshot_text = write_text_snapshot(df, OUTPUT_TEXT_FILE, snapshot_date, missing)
+    update_prompt_spot_data(snapshot_text)
     print(snapshot_text, end="")
-
-    write_text_snapshot(df, OUTPUT_TEXT_FILE, snapshot_date, missing)
     print(f"Saved snapshot to: {OUTPUT_TEXT_FILE}")

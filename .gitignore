@@ -40,6 +40,9 @@ node_modules/
 stock_scan_quality_cache.json
 stock_scan_snapshot.txt
 
+# Keep the Claude weekly brief prompt in Git
+!prompts/weekly-market-brief-v7.txt
+
 # Jupyter
 .ipynb_checkpoints/
 
