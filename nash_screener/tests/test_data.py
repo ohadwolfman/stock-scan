@@ -185,11 +185,10 @@ def test_reports_written(tmp_path):
     raws = {"GOODCO": good_raw(), "OTHER": good_raw()}
     paths = report.write_all([r1, r2], raws, {"BAD": "RuntimeError: x"}, tmp_path, {"generated": "now", "yfinance": "t"})
     h = paths["html"].read_text(encoding="utf-8")
-    assert 'dir="rtl"' in h and "חינוך, לא ייעוץ פיננסי" in h and "Great company, fair price" in h
-    assert "/130 (the document calls it 125)" in h and "Cisco" in h
+    assert 'dir="rtl"' in h and "חינוך, לא ייעוץ פיננסי" in h and "GOODCO" in h and "OTHER" in h
     csv_text = paths["csv"].read_text(encoding="utf-8-sig")
     assert csv_text.splitlines()[0].startswith("ticker,") and len(csv_text.splitlines()) == 3
     j = json.loads(paths["json"].read_text(encoding="utf-8"))
     assert j["tickers"]["GOODCO"]["raw"]["info"]["currency"] == "USD"
     table = report.console_table([r1, r2], {"BAD": "x"})
-    assert "SURVIVED ALL 12" in table and "INCOMPLETE" in table and "ERROR" in table
+    assert "SURVIVED ALL 12" in table and "PASSED ALL EVALUATED" in table and "ERROR" in table

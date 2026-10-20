@@ -58,7 +58,7 @@ STATEMENT_OF = {
 }
 NON_MONETARY = {"shares"}
 # Lines that may be legitimately absent from a filing (A22): absent in every period = not reported.
-ABSENT_MEANS_ZERO = {"goodwill", "inventory", "interest_expense"}
+ABSENT_MEANS_ZERO = {"goodwill", "inventory", "interest_expense", "debt"}
 
 
 def growth_pct(new, old):
@@ -303,6 +303,18 @@ class Metrics:
             return M(pct(op.value, rev.value), "prior TTM operating income / prior TTM revenue")
         return M(None, "prior TTM unavailable", rev.note or op.note)
 
+    def quarter_yoy_margins(self) -> M:
+        """Latest quarter's operating margin and the same quarter a year earlier (needs 5 quarters)."""
+        r, o = self.series("revenue", "q"), self.series("operating_income", "q")
+        if not (r.ok and o.ok):
+            return M(None, "quarterly revenue / operating income unavailable")
+        rd, od = dict(r.value), dict(o.value)
+        dates = [d for d, _ in r.value if d in od]
+        if len(dates) < 5 or not rd[dates[0]] or not rd[dates[4]]:
+            return M(None, "needs 5 quarters of revenue and operating income")
+        return M((pct(od[dates[0]], rd[dates[0]]), pct(od[dates[4]], rd[dates[4]]), dates[0], dates[4]),
+                 "latest quarter vs the same quarter a year earlier")
+
     def fcf_margin(self) -> M:
         f, r = self.ttm("fcf"), self.ttm("revenue")
         if f.ok and r.ok and r.value:
@@ -330,6 +342,9 @@ class Metrics:
 
     def net_cash_per_quarter(self) -> M:
         c, d = self.series("cash", "q"), self.series("debt", "q")
+        if c.ok and d.meta.get("absent"):  # no debt line in any period: zero debt (A22)
+            rows = [(dt_, cv, 0.0) for dt_, cv in c.value][:config.PRESCREEN_MAX_QUARTERS]
+            return M(rows, f"{c.source} vs {d.source}", assumptions=["A22"])
         if not (c.ok and d.ok):
             return M(None, f"{c.source}; {d.source}")
         dd = dict(d.value)
@@ -400,7 +415,13 @@ class Metrics:
 
     def short_interest(self) -> M:
         v = self.info.get("shortPercentOfFloat")
-        return M(v * 100 if v is not None else None, "info.shortPercentOfFloat")
+        if v is not None:
+            return M(v * 100, "info.shortPercentOfFloat")
+        sh, fl = self.info.get("sharesShort"), self.info.get("floatShares")
+        if sh is not None and fl:
+            return M(sh / fl * 100, "info.sharesShort / info.floatShares", "shortPercentOfFloat missing (A26)",
+                     assumptions=["A26"])
+        return M(None, "info.shortPercentOfFloat")
 
     def institutional_ownership(self) -> M:
         v = self.info.get("heldPercentInstitutions")

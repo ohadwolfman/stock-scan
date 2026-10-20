@@ -82,10 +82,10 @@ def test_step6_status_from_range():
     # computed part of the fixture is 70 (7 categories x 10); range decides
     none = _compute({k: None for k in manual.SCORE_FIELDS})
     assert none["computed"] == 70
-    assert none["status"] == "UNKNOWN"          # 70..130
+    assert none["status"] == "PASS"             # empty manual scores are ignored, bar scaled to 7 categories (A28)
     low = _compute({"moat": 0, "ceo": 0, "recession_proof_pricing_power": 0, "secular_trend": 0,
                     "culture_mission": None, "talent": None})
-    assert low["max"] == 90 and low["status"] == "UNKNOWN"
+    assert low["max"] == 90 and low["status"] == "PASS"
     zero = _compute({k: 0 for k in manual.SCORE_FIELDS})
     assert zero["min"] == 70 and zero["status"] == "FAIL"
     five = _compute({"moat": 5, "ceo": None, "recession_proof_pricing_power": None, "secular_trend": None,

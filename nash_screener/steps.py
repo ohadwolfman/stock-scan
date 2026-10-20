@@ -12,7 +12,7 @@ import scorecard
 import valuation
 from metrics import M, Metrics, growth_pct, pct
 
-PASS, FAIL, UNKNOWN, INFO = "PASS", "FAIL", "UNKNOWN", "INFO"
+PASS, FAIL, UNKNOWN, INFO, NA = "PASS", "FAIL", "UNKNOWN", "INFO", "NA"
 
 
 @dataclass
@@ -44,7 +44,10 @@ class Step:
 
     @property
     def status(self) -> str:
-        req = [c for c in self.checks if c.required and c.status != INFO]
+        # A28: a manual check nobody filled in is ignored; a step left with nothing to judge is NA
+        req = [c for c in self.checks if c.required and c.status != INFO and not (c.kind == "manual" and c.status == UNKNOWN)]
+        if not req:
+            return NA
         if any(c.status == FAIL for c in req):
             return FAIL
         if any(c.status == UNKNOWN for c in req):
@@ -55,7 +58,7 @@ class Step:
         return [c for c in self.checks if c.required and c.status == FAIL]
 
     def unknown(self):
-        return [c for c in self.checks if c.required and c.status == UNKNOWN]
+        return [c for c in self.checks if c.required and c.status == UNKNOWN and c.kind != "manual"]
 
 
 @dataclass
@@ -350,7 +353,7 @@ def step1(m, man, mcap_usd):
             if auto is None:
                 man.missing.append(f"skip_zones.{zone}")
             c.append(tri(f"skip_{zone}", he[zone], auto, src, assumptions=asm,
-                         kind=startup_kind if zone == "startup" else "auto"))
+                         kind=startup_kind if zone == "startup" else ("manual" if zone == "seasonal" else "auto")))
 
     # evidence for "sustainable revenue and earnings growth"
     _, rg = m._annual_growths("revenue")
@@ -421,7 +424,8 @@ def step2(m, man):
                  "3/3, or 2/3 with infrastructure_leverage | path_to_profitability", "",
                  "computed" + (", manual step2_valid_reason" if reason is not None else ""),
                  "Anything else, it's out" if st == FAIL else "", True,
-                 "an infrastructure company that genuinely needs leverage / a clear path to profitability")
+                 "an infrastructure company that genuinely needs leverage / a clear path to profitability",
+                 kind="manual" if reason is None and n_fail == 1 else "auto")
     c = qs + [rule, info("net_income", "רווח נקי TTM (מידע בלבד)", money(ni.value), ni.source,
                          "Read income from operations, not net income")]
     return Step(2, "בדיקת שפיות", "Sanity check (the No B***t Rule)", c, notes=notes)
@@ -738,7 +742,7 @@ def step10(m, man):
         ("great_people_want_to_work", "מנהיג שאנשים טובים רוצים לעבוד אצלו", ""),
         ("results_not_excuses", "תוצאות, לא תירוצים", ""),
     ]
-    trues = unknowns = 0
+    trues = falses = filled_manual = 0
     for f, he, hint in items:
         if f == "consistent_beats":
             v = man.peek("step10.consistent_beats")
@@ -756,12 +760,14 @@ def step10(m, man):
             ch.required = False
         c.append(ch)
         trues += ch.status == PASS
-        unknowns += ch.status == UNKNOWN
+        falses += ch.status == FAIL
+        filled_manual += ch.kind == "manual" and ch.status in (PASS, FAIL)
+    unknowns = len(items) - trues - falses
     need = config.CEO_CHECKLIST_MIN
     st = PASS if trues >= need else (FAIL if trues + unknowns < need else UNKNOWN)
-    c.append(Check("checklist", "רשימת 8 הבדיקות", st, f"{trues}/8 true, {unknowns} unknown", f">= {need} of 8",
+    c.append(Check("checklist", "רשימת 8 הבדיקות", st, f"{trues}/8 true, {falses} false, {unknowns} not filled", f">= {need} of 8",
                    f"{trues - need:+d}", "step 10 items", "", True, "I won't invest unless I'm amazed by the CEO.",
-                   ("A6",)))
+                   ("A6",), kind="manual" if filled_manual == 0 else "auto"))
     c.append(manual_bool(man, "step10.clown_ceo", "דגל אדום: מנכ\"ל ליצן", bad=True))
     v = man.peek("step10.co_ceo")
     auto, src = co_ceo_auto(m)
@@ -788,6 +794,12 @@ def declining_margins(m: Metrics) -> Check:
         a, b = pct(op_now.value, now.value), pct(op_prior.value, prior.value)
         ttm_fell = a < b
         ttm_txt = f"TTM {a:.1f}% vs prior {b:.1f}%"
+    else:
+        qy = m.quarter_yoy_margins()  # A27: fresher than the annual comparison when 8 quarters are not available
+        if qy.ok:
+            a, b, da, db = qy.value
+            ttm_fell = a < b
+            ttm_txt = f"quarter {da} {a:.1f}% vs {db} {b:.1f}%"
     am = m.annual_margins()
     ann_fell = None
     ann_txt = "annual comparison unavailable"
@@ -806,7 +818,7 @@ def declining_margins(m: Metrics) -> Check:
         note = "only one comparison available; it decides alone"
     return Check("declining_margins", "דגל אדום: מרווחים יורדים", st, f"{ttm_txt}; {ann_txt}",
                  "not falling on both", "", "computed (quarterly + annual income statement)", note, True,
-                 "Declining margins", ("A18",))
+                 "Declining margins", ("A18", "A27") if "quarter " in ttm_txt else ("A18",))
 
 
 def inventory_check(m: Metrics) -> Check:
@@ -831,8 +843,8 @@ def inventory_check(m: Metrics) -> Check:
     if ig is None:
         return Check("inventory_pileup", name, UNKNOWN, f"revenue {fmt(rg.value, '%')}, inventory n/a", "", "",
                      inv_q.source, "", True, q, ("A9",))
-    return Check("inventory_pileup", name, FAIL if round(ig, 6) > round(rg.value, 6) else PASS,
-                 f"revenue {fmt(rg.value, '%')} vs inventory {fmt(ig, '%')}", "inventory growth <= revenue growth",
+    return Check("inventory_pileup", name, FAIL if round(ig, 6) > round(rg.value + config.INVENTORY_TOLERANCE_PP, 6) else PASS,
+                 f"revenue {fmt(rg.value, '%')} vs inventory {fmt(ig, '%')}", f"inventory growth <= revenue growth + {config.INVENTORY_TOLERANCE_PP:.0f} pp",
                  f"{rg.value - ig:+.1f} pp", f"{rg.source}; {src}", "", True, q, ("A9",))
 
 
@@ -880,7 +892,7 @@ def step11(m, man, s2: Step):
     desc = (f"no revenue: {fmt(no_rev)} ({rev.source}); weak fundamentals (step 2 {s2.status}): {fmt(weak)}; "
             f"constant share sales: {fmt(ss.value)} ({ss.note or ss.source}); nonstop media hype: {fmt(hype)}")
     c.append(Check("hype_trap", "מלכודת הייפ: ארבעתם יחד", st, desc, "not all four", "", "computed + manual",
-                   "", True, "All four at once? Run.", ("A10",)))
+                   "", True, "All four at once? Run.", ("A10",), "manual" if hype is None else "auto"))
     return Step(11, "להרוס משהו יפה", "Destroy something beautiful", c,
                 quote="By now you like this stock. That's exactly when you're most dangerous to yourself.")
 
@@ -896,7 +908,8 @@ def step12(m, man, s3: Step, peers: dict, btype: M):
     base_rev = avg_growth = avg_margin = None
     why_na = []
     if rev.ok and len(rev.value) >= n_avg:
-        base_rev = sum(v for _, v in rev.value[:n_avg]) / n_avg
+        ttm_rev = m.ttm_or_fallback("revenue")
+        base_rev = ttm_rev.value if ttm_rev.ok else sum(v for _, v in rev.value[:n_avg]) / n_avg
         gs = [growth_pct(rev.value[i][1], rev.value[i + 1][1]) for i in range(min(n_avg, len(rev.value) - 1))]
         gs = [g for g in gs if g is not None]
         if len(gs) >= 2:
@@ -1072,6 +1085,8 @@ def evaluate(ticker: str, m: Metrics, man, spy_hist: dict, peers: dict | None = 
         verdict = f"ELIMINATED AT STEP {eliminated}"
     elif any(s.status == UNKNOWN for s in steps):
         verdict = "INCOMPLETE"
+    elif any(s.status == NA for s in steps):
+        verdict = "PASSED ALL EVALUATED"
     else:
         verdict = "SURVIVED ALL 12"
 

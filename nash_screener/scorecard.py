@@ -151,16 +151,20 @@ def compute(m, man, spy_hist) -> dict:
     computed = sum(r.points for r in rows if not r.manual and r.points is not None)
     manual_pts = sum(r.points for r in rows if r.manual and r.points is not None)
     missing = [r for r in rows if r.points is None]
+    auto_missing = [r for r in missing if not r.manual]
     total_min = computed + manual_pts
     total_max = total_min + 10 * len(missing)
-    if total_max < config.SCORE_WATCHLIST:
+    # A28: categories with an empty manual score are left out; the 75/130 bar is scaled to what was scored
+    scored = len(rows) - len([r for r in missing if r.manual])
+    bar = config.SCORE_WATCHLIST * scored / len(rows)
+    if total_min + 10 * len(auto_missing) < bar:
         status = "FAIL"
-    elif total_min >= config.SCORE_WATCHLIST:
+    elif total_min >= bar and not auto_missing:
         status = "PASS"
     else:
         status = "UNKNOWN"
     return {
-        "rows": rows, "computed": computed, "manual": manual_pts, "min": total_min, "max": total_max,
+        "scored": scored, "bar": bar, "rows": rows, "computed": computed, "manual": manual_pts, "min": total_min, "max": total_max,
         "complete": not missing, "missing": [r.n for r in missing], "status": status,
         "band": band(total_min) if not missing else
         (band(total_min) if band(total_min) == band(total_max) else f"{band(total_min)} .. {band(total_max)}"),

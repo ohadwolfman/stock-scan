@@ -22,12 +22,12 @@ def test_first_fail_in_step_order_wins():
     assert r.verdict == "ELIMINATED AT STEP 1" and r.eliminated_at == 1
 
 
-def test_unknown_is_never_pass():
+def test_empty_manual_is_ignored_not_passed():
     r = evaluate(None, {})
-    assert r.verdict == "INCOMPLETE"
+    assert r.verdict == "PASSED ALL EVALUATED"   # A28: nothing failed, but manual-only steps are N/A, not PASS
     for f in ("step1.paying_customers", "step4.provides", "step9.types", "step11.bear_reasons", "skip_zones.seasonal"):
         assert f in r.missing
-    assert r.steps[0].status == "UNKNOWN"
+    assert r.steps[3].status == "NA" and r.steps[4].status == "NA"
 
 
 def test_fail_beats_unknown():

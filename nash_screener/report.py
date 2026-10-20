@@ -8,9 +8,9 @@ import json
 from pathlib import Path
 
 import config
-from steps import FAIL, INFO, PASS, UNKNOWN, fmt, money
+from steps import FAIL, INFO, NA, PASS, UNKNOWN, fmt, money
 
-STATUS_HE = {PASS: "עבר", FAIL: "נכשל", UNKNOWN: "חסר", INFO: "מידע"}
+STATUS_HE = {PASS: "עבר", FAIL: "נכשל", UNKNOWN: "חסר", INFO: "מידע", NA: "לא נבדק"}
 
 
 def verdict_he(r) -> str:
@@ -20,6 +20,8 @@ def verdict_he(r) -> str:
         return "לא הושלם: חסרים נתונים"
     if r.verdict == "SURVIVED ALL 12":
         return "שרדה את כל 12 השלבים"
+    if r.verdict == "PASSED ALL EVALUATED":
+        return "עברה את כל מה שנבדק"
     return r.verdict
 
 
@@ -30,15 +32,16 @@ def score_text(sc) -> str:
 
 # ------------------------------------------------------------------ console
 def console_table(results, errors: dict) -> str:
-    head = ["Ticker", "Verdict", "Elim", "Score /130 (comp+man) [range]", "Price", "Mkt cap", "Data %", "Quote time"]
+    head = ["#", "Ticker", "Verdict", "Checks %", "Passed steps", "Failed steps", "Price", "Mkt cap"]
     rows = []
-    for r in results:
+    for i, r in enumerate(ranked(results), 1):
         h = r.header
-        rows.append([r.ticker, r.verdict, str(r.eliminated_at or "-"), score_text(r.score),
-                     f"{fmt(h['price'], '', 2)} {h.get('currency') or ''}".strip(), money(h["market_cap"]),
-                     f"{r.completeness:.0f}%", str(h.get("quote_time") or "n/a")])
-    for t, e in errors.items():
-        rows.append([t, "ERROR", "-", "-", "-", "-", "0%", e[:40]])
+        rows.append([str(i), r.ticker, r.verdict, f"{check_rate(r):.0f}%",
+                     ",".join(str(s.n) for s in r.steps if s.status == PASS) or "-",
+                     ",".join(str(s.n) for s in r.steps if s.status == FAIL) or "-",
+                     f"{fmt(h['price'], '', 2)} {h.get('currency') or ''}".strip(), money(h["market_cap"])])
+    for t, e_ in errors.items():
+        rows.append(["-", t, "ERROR", "-", "-", "-", "-", e_[:40]])
     widths = [max(len(str(x)) for x in col) for col in zip(head, *rows)] if rows else [len(h) for h in head]
     line = lambda cells: "  ".join(str(c).ljust(w) for c, w in zip(cells, widths))
     out = [line(head), line(["-" * w for w in widths])] + [line(r) for r in rows]
@@ -66,7 +69,7 @@ td.ltr{text-align:left}
 .tbl{overflow-x:auto}
 .b{display:inline-block;border-radius:999px;padding:1px 9px;font-size:12px;font-weight:600;white-space:nowrap}
 .PASS{background:var(--pass-bg);color:var(--pass)}.FAIL{background:var(--fail-bg);color:var(--fail)}
-.UNKNOWN{background:var(--unk-bg);color:var(--unk)}.INFO{background:var(--info-bg);color:var(--info)}
+.UNKNOWN,.NA{background:var(--unk-bg);color:var(--unk)}.INFO{background:var(--info-bg);color:var(--info)}
 .verdict{border-radius:10px;padding:14px 16px;margin:12px 0;border:1px solid var(--line)}
 .verdict.FAIL{border-color:var(--fail)}.verdict.PASS{border-color:var(--pass)}.verdict.UNKNOWN{border-color:var(--unk)}
 .verdict .big{font-size:20px;font-weight:700}
@@ -94,7 +97,7 @@ def verdict_class(r):
     return FAIL if r.eliminated_at else (UNKNOWN if r.verdict == "INCOMPLETE" else PASS)
 
 
-def html_report(results, run_meta: dict, errors: dict) -> str:
+def html_report_full(results, run_meta: dict, errors: dict) -> str:
     parts = [f"""<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Nash 12-Step Report</title>
 <style>{CSS}</style></head><body><main>
@@ -287,6 +290,72 @@ def after_html(r) -> str:
             "כשהמניה יורדת, לשאול שאלה אחת: האם השתנה משהו משמעותי בעסק?</li></ul>")
 
 
+
+# ------------------------------------------------------------------ ranking and the compact report
+def evaluated_checks(step):
+    return [c for c in step.checks if c.required and c.status in (PASS, FAIL)]
+
+
+def rank_key(r):
+    """Best first: survivors, then the deeper the elimination step the better, then more steps passed,
+    then the share of passed checks."""
+    depth = r.eliminated_at or len(r.steps) + 1
+    passed = sum(s.status == PASS for s in r.steps)
+    cs = [c for s in r.steps for c in evaluated_checks(s)]
+    rate = sum(c.status == PASS for c in cs) / len(cs) if cs else 0.0
+    return (-depth, -passed, -rate)
+
+
+def check_rate(r) -> float:
+    cs = [c for s in r.steps for c in evaluated_checks(s)]
+    return 100.0 * sum(c.status == PASS for c in cs) / len(cs) if cs else 0.0
+
+
+def ranked(results):
+    return sorted(results, key=rank_key)
+
+
+def short(c, n=80) -> str:
+    v = str(c.value)
+    v = v if len(v) <= n else v[:n - 1] + "…"
+    return f"{c.name}: {v}"
+
+
+def compact_report(results, run_meta: dict, errors: dict) -> str:
+    out = [f"""<!doctype html><html lang="he" dir="rtl"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>Nash Ranking</title>
+<style>{CSS}
+td.good{{color:var(--pass)}}td.bad{{color:var(--fail)}}.chip{{display:inline-block;margin:1px 2px;white-space:nowrap}}
+.rk{{font-weight:700}}ul.tight{{margin:0;padding-inline-start:16px}}</style></head><body><main>
+<h1>דירוג מניות לפי 12 השלבים של Tom Nash</h1>
+<div class="muted">הופק <span class="ltr">{e(run_meta['generated'])}</span> · {len(results)} מניות ·
+שדות ידניים ריקים אינם נספרים; שלב בלי מה לבדוק מסומן "לא נבדק"</div>
+<div class="card"><div class="tbl"><table><tr><th>#</th><th>טיקר</th><th>פסק דין</th><th>% בדיקות שעברו</th>
+<th>מה טוב (שלבים שעברו)</th><th>מה לא טוב (שלבים שנכשלו)</th></tr>"""]
+    for i, r in enumerate(ranked(results), 1):
+        good = " ".join(f'<span class="chip">{s.n}. {e(s.name)}</span>' for s in r.steps if s.status == PASS) or "-"
+        bad = []
+        for s in r.steps:
+            if s.status != FAIL:
+                continue
+            items = "".join(f'<li class="ltr">{e(short(c))}</li>' for c in s.failed()[:3])
+            more = len(s.failed()) - 3
+            bad.append(f"<div><b>שלב {s.n}: {e(s.name)}</b><ul class='tight'>{items}"
+                       + (f"<li>ועוד {more}</li>" if more > 0 else "") + "</ul></div>")
+        unk = [s.n for s in r.steps if s.status == UNKNOWN]
+        if unk:
+            bad.append(f'<div class="muted">חסר נתון בשלבים: {", ".join(map(str, unk))}</div>')
+        out.append(f'<tr><td class="rk">{i}</td><td class="ltr"><b>{e(r.ticker)}</b><br>'
+                   f'<span class="muted">{e(str(r.header["name"])[:28])}</span></td>'
+                   f'<td>{badge(verdict_class(r))}<br>{e(verdict_he(r))}</td>'
+                   f'<td class="ltr">{check_rate(r):.0f}%</td><td class="good">{good}</td>'
+                   f'<td class="bad">{"".join(bad) or "-"}</td></tr>')
+    for t, err in errors.items():
+        out.append(f'<tr><td>-</td><td class="ltr">{e(t)}</td><td>{badge(UNKNOWN)} שגיאה</td>'
+                   f'<td colspan="3" class="ltr">{e(err)}</td></tr>')
+    out.append(f"</table></div></div><footer>{e(config.DISCLAIMER_HE)}</footer></main></body></html>")
+    return "\n".join(out)
+
 # ------------------------------------------------------------------ CSV / JSON
 def csv_rows(results):
     rows = []
@@ -334,13 +403,14 @@ def write_json(results, raws: dict, path: Path, run_meta: dict):
     path.write_text(json.dumps(out, ensure_ascii=False, indent=1, default=str), encoding="utf-8")
 
 
-def write_all(results, raws, errors, reports_dir, run_meta) -> dict:
+def write_all(results, raws, errors, reports_dir, run_meta, full=False) -> dict:
     d = Path(reports_dir)
     d.mkdir(parents=True, exist_ok=True)
     stamp = dt.datetime.now().strftime("%Y-%m-%d_%H%M")
     paths = {"html": d / f"nash_report_{stamp}.html", "csv": d / f"nash_summary_{stamp}.csv",
              "json": d / f"nash_raw_{stamp}.json"}
-    paths["html"].write_text(html_report(results, run_meta, errors), encoding="utf-8")
+    paths["html"].write_text((html_report_full if full else compact_report)(results, run_meta, errors),
+                             encoding="utf-8")
     write_csv(results, paths["csv"])
     write_json(results, raws, paths["json"], run_meta)
     return paths

@@ -144,7 +144,7 @@ def test_step2_combinations():
     raw = good_raw()
     raw["q_balance"]["rows"]["Total Debt"] = [60 * B] * 8          # fails cash vs debt only
     man = good_manual()
-    assert evaluate(raw, man).steps[1].status == "UNKNOWN"          # reason null
+    assert evaluate(raw, man).steps[1].status == "NA"               # reason null: ignored (A28)
     man["step2_valid_reason"] = "none"
     assert evaluate(raw, man).steps[1].status == "FAIL"
     man["step2_valid_reason"] = "infrastructure_leverage"

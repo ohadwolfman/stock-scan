@@ -93,6 +93,7 @@ BEAR_REASONS_MIN = 3             # "3 to 5 reasons"
 INSIDER_NET_SELL_PCT = 1.0       # A7
 INSIDER_RUN_RETURN_PCT = 50.0    # A7
 INVENTORY_SPIKE_REV_GROWTH_PCT = 30.0   # A9
+INVENTORY_TOLERANCE_PP = 10.0            # A9: inventory must outgrow revenue by more than this
 SHARE_SALES_YEARS = 3            # A10
 SHARE_SALES_TOTAL_PCT = 5.0      # A10
 
@@ -133,7 +134,7 @@ ASSUMPTIONS = {
           "while the 12-month return is above 50%. Hint only; FAIL comes from the manual confirmation.",
     "A8": "Market open/closed: regular session 09:30-16:00 in the exchange time zone "
           "(info.exchangeTimezoneName, default US Eastern), Monday to Friday, holidays not modeled.",
-    "A9": "Revenue spiking while inventory piles up: revenue growth above 30% and inventory growth above revenue growth.",
+    "A9": "Revenue spiking while inventory piles up: revenue growth above 30% and inventory growth above revenue growth by more than 10 points.",
     "A10": "Constant share sales to raise cash: share count up in each of the last 3 fiscal years and by more than 5% in total.",
     "A11": "DCF growth trim: 25% off the 3-year average growth (override: step12.growth_trim_override).",
     "A12": "PEG between 1 and 2: 'between fair and very expensive'.",
@@ -141,7 +142,7 @@ ASSUMPTIONS = {
     "A14": "5-year return: ticker vs SPY on adjusted closes (total return), in percentage points.",
     "A15": "The Rule of 40 is a required check in step 3 only for software and subscription businesses.",
     "A16": "Cash includes short-term investments; debt is yfinance 'Total Debt' (includes leases).",
-    "A17": "DCF base revenue: the average of the last 3 fiscal years (literal reading of step 12.01).",
+    "A17": "DCF base revenue: TTM revenue (latest fiscal year if TTM is missing); growth and FCF margin are 3-year averages. A 3-year revenue average would start the projection below today's revenue.",
     "A18": "Declining margins: FAIL when operating margin fell both TTM vs prior TTM and in the latest fiscal "
            "year vs the previous one; only one of the two = warning. When prior TTM is not available, the "
            "annual comparison decides alone (data fallback rule).",
@@ -159,6 +160,11 @@ ASSUMPTIONS = {
            "(fallback: annual).",
     "A25": "Market cap in USD for the $1B and $2B tests: converted with the yfinance FX pair when the trading "
            "currency is not USD.",
+    "A26": "Short interest falls back to sharesShort / floatShares when shortPercentOfFloat is missing.",
+    "A28": "Manual judgements nobody filled in are ignored, not counted as failures; a step with nothing left "
+           "to judge is N/A. Scorecard: only scored categories count and the 75/130 bar is scaled to them.",
+    "A27": "Declining margins: when prior TTM is unavailable (fewer than 8 quarters), the latest quarter is compared "
+           "with the same quarter a year earlier, instead of falling back to a stale fiscal year.",
 }
 
 KNOWN_INCONSISTENCIES = [

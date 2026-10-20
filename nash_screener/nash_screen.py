@@ -90,6 +90,7 @@ def main(argv=None) -> int:
     ap.add_argument("--file", help="tickers file: one per line, or separated by commas or spaces")
     ap.add_argument("--manual", default=config.MANUAL_FILE, help="manual inputs YAML (default nash_manual.yaml)")
     ap.add_argument("--init-manual", action="store_true", help="create or extend the manual file with hints and exit")
+    ap.add_argument("--full", action="store_true", help="long per-ticker HTML report instead of the compact ranking")
     ap.add_argument("--refresh", action="store_true", help="ignore today's cache")
     ap.add_argument("--cache-dir", default=config.CACHE_DIR)
     ap.add_argument("--reports-dir", default=config.REPORTS_DIR)
@@ -149,7 +150,7 @@ def main(argv=None) -> int:
             "manual_file": str(a.manual), "spy_points": len(spy)}
     print()
     print(report.console_table(results, errors))
-    paths = report.write_all(results, raws, errors, a.reports_dir, meta)
+    paths = report.write_all(results, raws, errors, a.reports_dir, meta, full=a.full)
     print()
     for k, p in paths.items():
         print(f"{k}: {p}")
